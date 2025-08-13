@@ -1,0 +1,109 @@
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and Build
+
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ${{ secrets.POSTGRES_USERNAME }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DATABASE }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U $POSTGRES_USER -d $POSTGRES_PASSWORD"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping || exit 1"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+
+    env:
+      # DB
+      POSTGRES_USERNAME: ${{ secrets.POSTGRES_USERNAME }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_DATABASE: ${{ secrets.POSTGRES_DATABASE }}
+      POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+      POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
+      DATABASE_URL: postgres://${{ secrets.POSTGRES_USERNAME }}:${{ secrets.POSTGRES_PASSWORD }}@localhost:5432/${{ secrets.POSTGRES_DATABASE }}
+      DATABASE_SCHEMA: ${{ secrets.DATABASE_SCHEMA }}
+
+      # Redis
+      REDIS_URL: ${{ secrets.REDIS_URL }}
+
+      # Azure Blob
+      AZURE_ACCOUNT_NAME: ${{ secrets.AZURE_ACCOUNT_NAME }}
+      AZURE_ACCOUNT_KEY: ${{ secrets.AZURE_ACCOUNT_KEY }}
+      AZURE_CONNECTION_STRING: ${{ secrets.AZURE_CONNECTION_STRING }}
+      AZURE_CONTAINER: ${{ secrets.AZURE_CONTAINER }}
+
+      # Azure OpenAI
+      AZURE_ENDPOINT_URL: ${{ secrets.AZURE_ENDPOINT_URL }}
+      AZURE_ENDPOINT_KEY: ${{ secrets.AZURE_ENDPOINT_KEY }}
+      AZURE_OPENAI_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_DEPLOYMENT_NAME }}
+      AZURE_OPENAI_API_VERSION: ${{ secrets.AZURE_OPENAI_API_VERSION }}
+
+      # etc (Swagger/JWT 등)
+      JWT_BEARER_TOKEN: ${{ secrets.JWT_BEARER_TOKEN }}
+      SWAGGER_USERNAME: ${{ secrets.SWAGGER_USERNAME }}
+      SWAGGER_PASSWORD: ${{ secrets.SWAGGER_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Cache node modules
+        uses: actions/cache@v4
+        id: npm-cache
+        with:
+          path: '**/node_modules'
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install Dependencies
+        if: steps.npm-cache.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Lint check
+        run: npm run lint || true
+
+      - name: Ensure enum types
+        run: npm run db:ensure:types
+
+      - name: Run migrations
+        run: npm run db:migration:run
+
+      - name: Build
+        run: npm run build
+
+      - name: Run E2E tests
+        run: npm run --if-present test:e2e
+
+      - name: Check test coverage
+        run: npm run --if-present test:cov
