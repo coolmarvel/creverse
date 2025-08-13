@@ -1,27 +1,41 @@
-import AppDataSource from '../data-source.ts';
-import { DataSource } from 'typeorm';
+import { readdir } from 'fs/promises';
+import { resolve } from 'path';
+import { spawn } from 'child_process';
 
-// Ensure enum types exist when generating against a non-empty DB
-async function ensureEnumTypes(ds) {
-  await ds.query(`DO $$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'revision_status') THEN
-      CREATE TYPE "public"."revision_status" AS ENUM ('PENDING','PROCESSING','SUCCESS','FAILED');
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'submission_status') THEN
-      CREATE TYPE "public"."submission_status" AS ENUM ('PENDING','PROCESSING','SUCCESS','FAILED','RETRY_SCHEDULED');
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'result_status') THEN
-      CREATE TYPE "public"."result_status" AS ENUM ('ok','failed');
-    END IF;
-  END $$;`);
+function run(cmd, args, opts = {}) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(cmd, args, { stdio: 'inherit', shell: process.platform === 'win32', ...opts });
+    child.on('exit', (code) => {
+      if (code === 0) resolvePromise();
+      else reject(new Error(`${cmd} ${args.join(' ')} exited with code ${code}`));
+    });
+    child.on('error', reject);
+  });
 }
 
-const name = process.argv[2] || 'InitSchema';
-await AppDataSource.initialize();
-await ensureEnumTypes(AppDataSource);
-await AppDataSource.showMigrations();
-await AppDataSource.runMigrations({ transaction: 'all' });
-await AppDataSource.destroy();
+async function main() {
+  const baseName = process.argv[2] || 'InitSchema';
+  const migrationsDir = resolve(process.cwd(), 'src/db/migrations');
 
-console.log('[TIP] Use `npm run db:migration:run` after you add a real migration.');
-console.log(`[NOTE] To generate with TypeORM CLI directly, use: npx typeorm-ts-node-commonjs migration:generate -d src/db/data-source.ts src/db/migrations/${name}`);
+  // 0) Ultra-simple guard: if any *-InitSchema.(ts|js) exists, skip creating another InitSchema
+  if (baseName === 'InitSchema') {
+    const files0 = await readdir(migrationsDir);
+    const hasInitFile = files0.some((f) => /^\d+-InitSchema\.(ts|js)$/.test(f));
+    if (hasInitFile) {
+      console.log('[skip] InitSchema file already exists in migrations. Skipping generation.');
+      process.exit(0);
+    }
+  }
+
+  // 1) Generate migration with TypeORM CLI
+  const args = ['typeorm-ts-node-commonjs', 'migration:generate', '-d', 'src/db/data-source.ts', `src/db/migrations/${baseName}`];
+  await run('npx', args);
+
+  console.log(`[done] Generated migration for ${baseName}.`);
+  console.log('[next] Run: npm run db:migration:run');
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
