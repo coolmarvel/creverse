@@ -5,16 +5,20 @@ services:
     image: postgres:16
     container_name: creverse-postgres
     restart: unless-stopped
+
     environment:
-      POSTGRES_USER:     ${{ secrets.POSTGRES_USERNAME }}
-      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-      POSTGRES_DB:       ${{ secrets.POSTGRES_DATABASE }}
+      POSTGRES_USER: ${POSTGRES_USERNAME}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DATABASE}
+
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
+
     volumes:
       - pgdata:/var/lib/postgresql/data
+
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${secrets.POSTGRES_USERNAME} -d ${secrets.POSTGRES_DATABASE}']
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
       interval: 5s
       timeout: 3s
       retries: 20
@@ -28,8 +32,6 @@ services:
     command: ['redis-server', '--appendonly', 'yes']
     volumes:
       - redisdata:/data
-
-  # (선택) 브라우저에서 DB 확인용
   pgadmin:
     image: dpage/pgadmin4:8
     container_name: creverse-pgadmin
